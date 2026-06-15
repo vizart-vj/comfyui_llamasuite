@@ -1,15 +1,12 @@
 [project]
-name = "comfyui_llama_swap"
-description = "A ComfyUI custom node for llama-swap the hot-swap model manager for llama.cpp."
-version = "1.0"
-requires-python = ">=3.9"
+name = "llama-suite-comfyui"
+description = "Manage and run llama.cpp server directly from ComfyUI for LLM generation."
+version = "1.0.0"
 license = { file = "LICENSE" }
-dependencies = []
 
 [project.urls]
-Repository = "https://github.com/ai-joe-git/comfyui_llama_swap"
+Repository = "https://github.com/YOUR_USERNAME/LlamaSuite"
 
+# Used to prevent conflicts with other custom nodes
 [tool.comfy]
-PublisherId = "ai-joe-git"
-DisplayName = "ComfyUI llama-swap"
-Icon = ""
+PublisherId = "vizart-vj"
