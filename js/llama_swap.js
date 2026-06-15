@@ -1,4 +1,3 @@
-
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
@@ -11,17 +10,21 @@ function getServerUrl(node) {
 }
 
 async function fetchModels(serverUrl) {
-    const resp = await api.fetchApi(`/llama_swap/models?url=${encodeURIComponent(serverUrl)}`);
+    const resp = await api.fetchApi(`/llama_suite/models?url=${encodeURIComponent(serverUrl)}`);
+    if (!resp.ok) throw new Error(`Server responded with ${resp.status}`);
     return await resp.json();
 }
 
 async function fetchRunning(serverUrl) {
-    const resp = await api.fetchApi(`/llama_swap/running?url=${encodeURIComponent(serverUrl)}`);
+    const resp = await api.fetchApi(`/llama_suite/running?url=${encodeURIComponent(serverUrl)}`);
+    if (!resp.ok) throw new Error(`Server responded with ${resp.status}`);
     return await resp.json();
 }
 
-async function doUnload(serverUrl) {
-    const resp = await api.fetchApi(`/llama_swap/unload?url=${encodeURIComponent(serverUrl)}`);
+async function doUnload(serverUrl, modelName) {
+    const resp = await api.fetchApi(`/llama_suite/unload?url=${encodeURIComponent(serverUrl)}&model=${encodeURIComponent(modelName)}`, {
+        method: 'POST'
+    });
     return await resp.json();
 }
 
@@ -54,7 +57,7 @@ function styledBtn(label, title, color = "#3a7bd5") {
     return btn;
 }
 
-// Floating picker — appears below anchor element, sets STRING widget on click
+// Floating picker
 function showModelPicker(models, anchorEl, onSelect) {
     document.getElementById("ls_model_picker")?.remove();
 
@@ -94,7 +97,6 @@ function showModelPicker(models, anchorEl, onSelect) {
 
     document.body.appendChild(picker);
 
-    // Close on outside click
     setTimeout(() => {
         document.addEventListener("click", function handler(e) {
             if (!picker.contains(e.target)) {
@@ -105,75 +107,200 @@ function showModelPicker(models, anchorEl, onSelect) {
     }, 0);
 }
 
+// Сбор параметров запуска с ноды
+function getLaunchArgs(node) {
+    const port = getWidget(node, "port")?.value;
+    const portNum = parseInt(port);
+    
+    if (isNaN(portNum) || portNum < 1025 || portNum > 65535) {
+        throw new Error(`Port must be between 1025 and 65535. Current: ${port}`);
+    }
+
+    return {
+        llama_path: getWidget(node, "llama_path")?.value || "llama-server",
+        models_dir: getWidget(node, "models_dir")?.value || "",
+        host: getWidget(node, "host")?.value || "0.0.0.0",
+        port: portNum,
+        context_length: getWidget(node, "context_length")?.value || 120000,
+        flash_attention: getWidget(node, "flash_attention")?.value === true,
+        extra_args: getWidget(node, "extra_args")?.value || "",
+    };
+}
+
+// Проверка статуса и обновление UI
+async function checkStatusAndUpdate(node, statusBadge, btnStart, btnStop) {
+    const urlVal = getWidget(node, "server_url")?.value ?? "http://localhost:8080";
+    
+    statusBadge.style.display = "inline-block";
+    
+    let isOnline = false;
+    try {
+        // Простая проверка доступности сервера через прямой запрос
+        const r = await fetch(`${urlVal}/v1/models`, { method: 'GET', signal: AbortSignal.timeout(1000) });
+        isOnline = r.ok;
+    } catch (e) {
+        isOnline = false;
+    }
+
+    if (isOnline) {
+        statusBadge.textContent = "🟢 Online";
+        statusBadge.style.color = "#4caf50";
+        btnStart.style.display = "none"; 
+        btnStop.style.display = "inline-block";
+    } else {
+        statusBadge.textContent = "🔴 Offline";
+        statusBadge.style.color = "#f44336";
+        btnStart.style.display = "inline-block";
+        btnStop.style.display = "none";
+    }
+}
+
 app.registerExtension({
-    name: "LlamaSwap.Client",
+    name: "LlamaSuite.Client",
 
     async nodeCreated(node) {
-        const isClient   = node.comfyClass === "LlamaSwapClient";
-        const isSelector = node.comfyClass === "LlamaSwapModelSelector";
-        if (!isClient && !isSelector) return;
+        const isClient = node.comfyClass === "LlamaSuiteClient";
+        if (!isClient) return;
 
         const bar = document.createElement("div");
         Object.assign(bar.style, {
             display: "flex", flexWrap: "wrap",
             padding: "4px 6px", gap: "2px",
+            alignItems: "center"
         });
 
-        // 🔄 Fetch Models — opens floating picker, writes chosen name to STRING widget
-        const btnFetch = styledBtn("🔄 Fetch Models", "Fetch model list and pick one");
+        // Бейдж статуса
+        const statusBadge = document.createElement("span");
+        statusBadge.style.fontSize = "11px";
+        statusBadge.style.marginRight = "6px";
+        statusBadge.style.fontWeight = "bold";
+        statusBadge.style.display = "none";
+        bar.appendChild(statusBadge);
+
+        // 🔄 Fetch Models
+        const btnFetch = styledBtn("🔄 Fetch", "Fetch model list");
         btnFetch.addEventListener("click", async () => {
             btnFetch.textContent = "⏳…";
             btnFetch.disabled = true;
             try {
-                const url  = getServerUrl(node);
-                const data = await fetchModels(url);
+                const data = await fetchModels(getServerUrl(node));
                 if (data.status === "ok" && data.models.length > 0) {
-                    showModelPicker(data.models, btnFetch, (selected) => {
+                    showModelPicker(data.models, btnFetch, (selectedModelId) => {
                         const w = getWidget(node, "model");
                         if (w) {
-                            w.value = selected;
+                            w.value = selectedModelId;
                             node.setDirtyCanvas(true, true);
                         }
-                        toast(`✅ Model set: ${selected}`, "#2e7d32");
+                        toast(`✅ Model set: ${selectedModelId}`, "#2e7d32");
                     });
                 } else {
-                    toast(`⚠️ ${data.error ?? "No models returned by server"}`, "#b71c1c");
+                    toast(`⚠️ ${data.error ?? "No models"}`, "#b71c1c");
                 }
             } catch (e) {
                 toast(`❌ ${e}`, "#b71c1c");
             } finally {
-                btnFetch.textContent = "🔄 Fetch Models";
+                btnFetch.textContent = "🔄 Fetch";
                 btnFetch.disabled = false;
             }
         });
         bar.appendChild(btnFetch);
 
-        if (isClient) {
-            // 📋 Running
-            const btnRunning = styledBtn("📋 Running", "Show currently loaded model", "#5c6bc0");
-            btnRunning.addEventListener("click", async () => {
-                try {
-                    const data = await fetchRunning(getServerUrl(node));
-                    const list = data.running ?? [];
-                    toast(list.length ? `🟢 Running: ${list.join(", ")}` : "⬜ No models loaded", "#37474f");
-                } catch (e) { toast(`❌ ${e}`, "#b71c1c"); }
-            });
-            bar.appendChild(btnRunning);
+        // 📋 Running
+        const btnRunning = styledBtn("📋 Running", "Show running models", "#5c6bc0");
+        btnRunning.addEventListener("click", async () => {
+            try {
+                const data = await fetchRunning(getServerUrl(node));
+                const list = data.running ?? [];
+                toast(list.length ? `🟢 Running: ${list.join(", ")}` : "⬜ No models", "#37474f");
+            } catch (e) { toast(`❌ ${e}`, "#b71c1c"); }
+        });
+        bar.appendChild(btnRunning);
 
-            // ⏏ Unload All
-            const btnUnload = styledBtn("⏏ Unload All", "Unload all models from GPU now", "#c62828");
-            btnUnload.addEventListener("click", async () => {
-                if (!confirm("Unload ALL models from the llama-swap server?")) return;
-                try {
-                    const data = await doUnload(getServerUrl(node));
-                    toast(data.status === "ok" ? "✅ Models unloaded" : `⚠️ ${data.error}`,
-                          data.status === "ok" ? "#2e7d32" : "#b71c1c");
-                } catch (e) { toast(`❌ ${e}`, "#b71c1c"); }
-            });
-            bar.appendChild(btnUnload);
+        // ⏏ Unload Current
+        const btnUnload = styledBtn("⏏ Unload", "Unload model", "#c62828");
+        btnUnload.addEventListener("click", async () => {
+            const modelWidget = getWidget(node, "model");
+            const modelName = modelWidget?.value;
+
+            if (!modelName) {
+                toast("⚠️ Select a model first", "#b71c1c");
+                return;
+            }
+
+            if (!confirm(`Unload ${modelName}?`)) return;
+            
+            try {
+                const data = await doUnload(getServerUrl(node), modelName);
+                toast(data.status === "ok" ? `✅ ${modelName} unloaded` : `⚠️ ${data.error}`,
+                      data.status === "ok" ? "#2e7d32" : "#b71c1c");
+            } catch (e) { toast(`❌ ${e}`, "#b71c1c"); }
+        });
+        bar.appendChild(btnUnload);
+
+        // 🚀 Start Server Button
+        const btnStart = styledBtn("🚀 Start", "Launch server", "#2e7d32");
+        btnStart.addEventListener("click", async () => {
+            btnStart.disabled = true;
+            btnStart.textContent = "⏳ Starting...";
+            try {
+                const args = getLaunchArgs(node);
+                const resp = await api.fetchApi(`/llama_suite/start`, { 
+                    method: 'POST',
+                    body: JSON.stringify(args)
+                });
+                const data = await resp.json();
+                toast(`🚀 ${data.message}`, "#2e7d32");
+                // Ждем немного и проверяем статус
+                setTimeout(() => checkStatusAndUpdate(node, statusBadge, btnStart, btnStop), 2000);
+            } catch (e) {
+                toast(`❌ ${e.message || e}`, "#b71c1c");
+            } finally {
+                btnStart.disabled = false;
+                btnStart.textContent = "🚀 Start";
+            }
+        });
+        bar.appendChild(btnStart);
+
+        // 🛑 Stop Server Button
+        const btnStop = styledBtn("🛑 Stop", "Stop server", "#d32f2f");
+        btnStop.addEventListener("click", async () => {
+            if (!confirm("Stop server?")) return;
+            btnStop.disabled = true;
+            btnStop.textContent = "⏳ Stopping...";
+            try {
+                const resp = await api.fetchApi(`/llama_suite/stop`, { method: 'POST' });
+                const data = await resp.json();
+                toast(`🛑 ${data.message}`, "#d32f2f");
+                
+                const modelWidget = getWidget(node, "model");
+                if (modelWidget) {
+                    modelWidget.value = "";
+                    node.setDirtyCanvas(true, true);
+                }
+
+                setTimeout(() => checkStatusAndUpdate(node, statusBadge, btnStart, btnStop), 2000);
+            } catch (e) {
+                toast(`❌ ${e}`, "#b71c1c");
+            } finally {
+                btnStop.disabled = false;
+                btnStop.textContent = "🛑 Stop";
+            }
+        });
+        bar.appendChild(btnStop);
+
+        // Инициализация
+        checkStatusAndUpdate(node, statusBadge, btnStart, btnStop);
+        
+        const urlWidget = getWidget(node, "server_url");
+        if (urlWidget) {
+            const origCallback = urlWidget.callback;
+            urlWidget.callback = (value) => {
+                if(origCallback) origCallback(value);
+                checkStatusAndUpdate(node, statusBadge, btnStart, btnStop);
+            };
         }
 
-        node.addDOMWidget("llama_swap_controls", "btn_bar", bar, {
+        node.addDOMWidget("llama_suite_controls", "btn_bar", bar, {
             serialize: false,
             hideOnZoom: false,
         });
