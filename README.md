@@ -37,8 +37,8 @@ The main inference and management node.
 ---
 
 🧠 Inference Settings
-|---|---|---|
 | Input	| Type | Description |
+|---|---|---|
 | server_url	| STRING	| Base URL for API calls (auto-updates with port). |
 | model	| STRING	| Model ID — populated via 🔄 Fetch Models. |
 | system_prompt	| STRING	| System role message. |
