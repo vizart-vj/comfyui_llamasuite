@@ -1,6 +1,6 @@
-🦙 ComfyUI LlamaSuite
-All-in-one solution for llama.cpp in ComfyUI.
-Launch, manage, and run inference with llama.cpp (llama-server) directly from your ComfyUI workflow — no external terminal required.
+# 🦙 ComfyUI LlamaSuite
+> All-in-one solution for llama.cpp in ComfyUI.
+> Launch, manage, and run inference with llama.cpp (llama-server) directly from your ComfyUI workflow — no external terminal required.
 
 ![screenshot](ex.png)
 
